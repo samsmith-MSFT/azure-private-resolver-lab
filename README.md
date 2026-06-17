@@ -11,14 +11,11 @@ Infrastructure is **Bicep + Azure Verified Modules**. Deployment is via an
 **OIDC-secured GitHub Actions pipeline** with a `what-if` gate, or via a
 single `az deployment sub create` from your Codespace terminal.
 
-![Architecture](diagram/architecture.png)
+**▶ [Open the interactive architecture diagram](https://samsmith-msft.github.io/azure-private-resolver-lab/diagram/architecture.html)** — click nodes for detail, use the flow chips to trace each demo (inbound, outbound, DNS Security Policy allowed/blocked, diagnostics), and toggle light/dark.
 
-> The PNG above is a snapshot of the lab's interactive HTML diagram. For the
-> clickable version with per-demo flow highlights and per-resource detail
-> cards, **[open the interactive diagram](https://samsmith-msft.github.io/azure-private-resolver-lab/diagram/architecture.html)**
-> (served via GitHub Pages) — or download
-> [`diagram/architecture.html`](diagram/architecture.html) and open it
-> locally in any modern browser.
+[![Architecture](diagram/architecture.png)](https://samsmith-msft.github.io/azure-private-resolver-lab/diagram/architecture.html)
+
+> The image above is a static preview; click it (or the link) for the live interactive version. The self-contained source is at [`diagram/architecture.html`](diagram/architecture.html) — open it in any browser, no server needed. (GitHub renders READMEs without JavaScript, so the diagram can't run inline here; it's hosted via GitHub Pages.)
 
 ## Contents
 

@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azure Private Resolver Lab — Architecture</title>
+<script>
+  (function () {
+    const saved = localStorage.getItem('theme');
+    const dark = saved ? saved === 'dark' : true;
+    document.documentElement.classList.toggle('dark', dark);
+  })();
+</script>
+<style>
+  :root {
+    --bg: #FAF9F5; --surface: #FFFFFF; --surface2: #F0EEE6;
+    --ink: #141413; --body: #3D3D3A; --muted: #87867F;
+    --line: #D1CFC5; --line-soft: #E6E3DA;
+    --azblue: #0078D4; --azblue-soft: rgba(0,120,212,0.10);
+    --olive: #788C5D; --olive-soft: rgba(120,140,93,0.12);
+    --gold: #C9A45C; --slate: #5B7E96;
+    --go: #2E7D32;
+    --stop: #C62828;
+    --flow: var(--azblue);
+    --zone: rgba(20,20,19,0.025); --zone-line: #D1CFC5;
+    --serif: ui-serif, Georgia, "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html.dark {
+    --bg: #141413; --surface: #1F1F1D; --surface2: #2A2A28;
+    --ink: #FAF9F5; --body: #D1CFC5; --muted: #87867F;
+    --line: #3D3D3A; --line-soft: #2A2A28;
+    --azblue: #4FA3E8; --azblue-soft: rgba(79,163,232,0.16);
+    --olive: #9DB07C; --olive-soft: rgba(157,176,124,0.16);
+    --gold: #D4B36F; --slate: #7FA3BC;
+    --go: #6FBE74;
+    --stop: #E57373;
+    --flow: var(--azblue);
+    --zone: rgba(250,249,245,0.03); --zone-line: #3D3D3A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--body); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 20px; border-bottom: 1px solid var(--line-soft); flex: none;
+  }
+  .bar h1 { font-family: var(--serif); font-weight: 500; font-size: 19px; color: var(--ink); letter-spacing: -0.01em; }
+  .bar .sub { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+  .spacer { flex: 1; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+    padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px;
+    background: transparent; color: var(--muted); cursor: pointer; transition: all .15s ease;
+  }
+  .chip:hover { color: var(--ink); border-color: var(--muted); }
+  .chip.on { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+  #themeToggle {
+    font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: transparent; color: var(--muted); cursor: pointer;
+  }
+  #themeToggle:hover { color: var(--ink); border-color: var(--muted); }
+  .stage { flex: 1; position: relative; min-height: 0; }
+  .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .zone rect { fill: var(--zone); stroke: var(--zone-line); stroke-width: 1; stroke-dasharray: 5 5; rx: 16; }
+  .zone .ztitle { font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--muted); }
+  .zone .zsub { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); opacity: 0.75; }
+  .node { cursor: pointer; }
+  .node rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; rx: 10; transition: stroke .15s ease, filter .15s ease; }
+  .node:hover rect { stroke: var(--muted); }
+  .node.sel rect { stroke: var(--azblue) !important; stroke-width: 2; }
+  .node .t  { font-family: var(--sans); font-size: 14px; font-weight: 600; fill: var(--ink); pointer-events: none; }
+  .node .m  { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); pointer-events: none; }
+  .node .k  { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--azblue); pointer-events: none; }
+  .node.gate rect { fill: var(--azblue-soft); stroke: var(--azblue); }
+  .node.store rect { fill: var(--surface2); }
+  .node.do rect { fill: var(--olive-soft); stroke: var(--olive); }
+  .node.ext rect { stroke-dasharray: 6 3; }
+  .edge { stroke: var(--muted); stroke-width: 1.6; fill: none; marker-end: url(#a-mut); opacity: 0; transition: opacity .25s ease, stroke .2s ease; }
+  .edge.dash { stroke-dasharray: 5 4; }
+  .elbl { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); opacity: 0; transition: opacity .25s ease; }
+
+  .stage.flowing .edge { opacity: 0; }
+  .stage.flowing .elbl { opacity: 0; }
+  .stage.flowing .node { opacity: 0.30; }
+  .stage.flowing .zone { opacity: 0.45; }
+  .stage.flowing .edge.lit {
+    opacity: 1; stroke: var(--flow); marker-end: url(#a-flow);
+    stroke-dasharray: 7 5; animation: march 0.9s linear infinite;
+  }
+  .stage.flowing .elbl.lit { opacity: 1; fill: var(--flow); }
+  .stage.flowing .node.lit { opacity: 1; }
+  .stage.flowing .node.lit rect { stroke: var(--flow); }
+  .stage.flowing.tone-go { --flow: var(--go); }
+  .stage.flowing.tone-stop { --flow: var(--stop); }
+  @keyframes march { to { stroke-dashoffset: -12; } }
+  @media (prefers-reduced-motion: reduce) { .stage.flowing .edge.lit { animation: none; } }
+  .card {
+    position: absolute; max-width: 380px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; box-shadow: 0 6px 24px rgba(0,0,0,0.08);
+  }
+  #detail { right: 16px; bottom: 16px; width: 360px; }
+  #detail h3 { font-family: var(--serif); font-weight: 500; font-size: 17px; color: var(--ink); margin-bottom: 2px; }
+  #detail .meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); margin-bottom: 8px; }
+  #detail p { font-size: 12.5px; line-height: 1.55; }
+  #detail p code, #flowcap code { font-family: var(--mono); font-size: 11px; color: var(--azblue); }
+  #flowcap { left: 16px; bottom: 16px; max-width: 480px; display: none; }
+  #flowcap.show { display: block; }
+  #flowcap .fname { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--flow); margin-bottom: 6px; }
+  #flowcap ol { margin-left: 18px; }
+  #flowcap li { font-size: 12.5px; line-height: 1.55; }
+  .src { position: absolute; top: 10px; right: 16px; font-family: var(--mono); font-size: 10px; color: var(--muted); opacity: 0.8; }
+  @media (max-width: 880px) {
+    body { overflow: auto; }
+    .stage { min-height: 70vh; }
+    #detail { position: static; width: auto; margin: 10px 16px; }
+    #flowcap { position: static; margin: 0 16px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div>
+    <h1>Azure DNS Private Resolver — Lab</h1>
+    <div class="sub">3 demos · inbound · outbound · DNS security policy</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="chips" id="chips">
+    <button class="chip on" data-flow="all">All</button>
+    <button class="chip" data-flow="inbound">Demo 1 · Inbound</button>
+    <button class="chip" data-flow="outbound">Demo 2 · Outbound</button>
+    <button class="chip" data-flow="secallow">Demo 3 · Allowed</button>
+    <button class="chip" data-flow="secblock">Demo 3 · Blocked</button>
+    <button class="chip" data-flow="diag">Diagnostics</button>
+  </div>
+  <button id="themeToggle">Theme</button>
+</div>
+
+<div class="stage" id="stage">
+<svg viewBox="0 0 1700 940" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Azure DNS Private Resolver lab architecture">
+  <defs>
+    <marker id="a-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"/>
+    </marker>
+    <marker id="a-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--flow)"/>
+    </marker>
+  </defs>
+
+  <!-- ZONES -->
+  <g class="zone" id="z-onprem">
+    <rect x="40" y="100" width="300" height="520"/>
+    <text class="ztitle" x="60" y="130">On-prem VNet (sim)</text>
+    <text class="zsub" x="60" y="148">10.1.0.0/16 · peered to hub</text>
+  </g>
+  <g class="zone" id="z-hub">
+    <rect x="380" y="100" width="500" height="600"/>
+    <text class="ztitle" x="400" y="130">Hub VNet</text>
+    <text class="zsub" x="400" y="148">10.0.0.0/16 · resolver lives here</text>
+  </g>
+  <g class="zone" id="z-back">
+    <rect x="920" y="100" width="320" height="600"/>
+    <text class="ztitle" x="940" y="130">Backends</text>
+    <text class="zsub" x="940" y="148">private DNS · storage</text>
+  </g>
+  <g class="zone" id="z-lab">
+    <rect x="1280" y="100" width="320" height="540"/>
+    <text class="ztitle" x="1300" y="130">Lab VNet</text>
+    <text class="zsub" x="1300" y="148">10.2.0.0/16 · DNS sec policy</text>
+  </g>
+  <g class="zone" id="z-log">
+    <rect x="40" y="640" width="300" height="160"/>
+    <text class="ztitle" x="60" y="670">Observability</text>
+  </g>
+
+  <!-- EDGES -->
+  <!-- Demo 1: on-prem inbound flow -->
+  <path class="edge" id="e-client-windns"   d="M180,260 L180,370"/>
+  <path class="edge" id="e-windns-inbound"  d="M300,400 C 340,400 360,300 400,300"/>
+  <path class="edge" id="e-inbound-resolver" d="M500,260 L500,240"/>
+  <path class="edge" id="e-resolver-pdns"   d="M860,210 L930,230"/>
+  <path class="edge" id="e-pdns-pe"         d="M1080,280 L1080,300"/>
+  <path class="edge" id="e-pe-stg"          d="M1080,400 L1080,420"/>
+
+  <!-- Demo 2: outbound flow (over backends) -->
+  <path class="edge" id="e-azvm-ruleset"    d="M1300,220 C 1100,80 700,80 600,370"/>
+  <path class="edge" id="e-ruleset-outbound" d="M755,370 L755,340"/>
+  <path class="edge" id="e-outbound-windns" d="M645,310 C 580,520 380,520 310,440"/>
+
+  <!-- Demo 3: lab vm to policy; policy allowed/blocked -->
+  <path class="edge" id="e-azvm-policy"     d="M1440,260 L1440,290"/>
+  <path class="edge" id="e-policy-blocked"  d="M1440,370 L1440,400"/>
+
+  <!-- Diagnostics -->
+  <path class="edge dash" id="e-rule-law"   d="M1300,440 C 800,440 600,720 320,720"/>
+
+  <!-- EDGE LABELS -->
+  <text class="elbl" data-e="e-client-windns" x="195" y="295">resolv.conf nameserver</text>
+  <text class="elbl" data-e="e-azvm-ruleset" x="950" y="85" text-anchor="middle">Demo 2: contoso.com matched</text>
+  <text class="elbl" data-e="e-outbound-windns" x="475" y="510" text-anchor="middle">port 53 to 10.1.1.4</text>
+  <text class="elbl" data-e="e-azvm-policy" x="1448" y="282">DNS query · evaluated</text>
+  <text class="elbl" data-e="e-policy-blocked" x="1448" y="392">blocked</text>
+  <text class="elbl" data-e="e-rule-law" x="600" y="585" text-anchor="middle">DnsResolverQueryLogs</text>
+
+  <!-- NODES: on-prem -->
+  <g class="node" data-k="onprem-client">
+    <rect x="60" y="180" width="240" height="80"/>
+    <text class="t" x="80" y="208">Ubuntu on-prem client</text>
+    <text class="m" x="80" y="228">vm-onprem-client</text>
+    <text class="m" x="80" y="246">simulates an on-prem host</text>
+  </g>
+  <g class="node" data-k="windns">
+    <rect x="60" y="370" width="240" height="100"/>
+    <text class="k" x="80" y="392">windows DNS · 10.1.1.4</text>
+    <text class="t" x="80" y="414">vm-dns-server</text>
+    <text class="m" x="80" y="432">Win 2022 + DNS role</text>
+    <text class="m" x="80" y="450">cond fwd + primary zone</text>
+  </g>
+  <g class="node ext" data-k="rdp-pip">
+    <rect x="60" y="500" width="240" height="60"/>
+    <text class="t" x="80" y="525">Optional public IP</text>
+    <text class="m" x="80" y="544">RDP · gated by allowedPublicIp</text>
+  </g>
+
+  <!-- NODES: hub VNet -->
+  <g class="node gate" data-k="resolver">
+    <rect x="400" y="180" width="460" height="60"/>
+    <text class="t" x="420" y="205">DNS Private Resolver</text>
+    <text class="m" x="420" y="225">res-dns-resolver · attached to hub VNet</text>
+  </g>
+  <g class="node" data-k="inbound">
+    <rect x="400" y="260" width="215" height="80"/>
+    <text class="k" x="420" y="282">inbound · static 10.0.1.4</text>
+    <text class="t" x="420" y="304">Inbound endpoint</text>
+    <text class="m" x="420" y="324">snet-resolver-in · /28</text>
+  </g>
+  <g class="node" data-k="outbound">
+    <rect x="645" y="260" width="215" height="80"/>
+    <text class="k" x="665" y="282">outbound</text>
+    <text class="t" x="665" y="304">Outbound endpoint</text>
+    <text class="m" x="665" y="324">snet-resolver-out · /28</text>
+  </g>
+  <g class="node gate" data-k="ruleset">
+    <rect x="400" y="370" width="460" height="80"/>
+    <text class="k" x="420" y="392">forwarding ruleset</text>
+    <text class="t" x="420" y="414">contoso.com → 10.1.1.4 :53</text>
+    <text class="m" x="420" y="434">linked: hub VNet, lab VNet</text>
+  </g>
+
+  <!-- NODES: backends -->
+  <g class="node store" data-k="pdns">
+    <rect x="930" y="200" width="300" height="80"/>
+    <text class="k" x="950" y="222">private DNS zone</text>
+    <text class="t" x="950" y="242">privatelink.blob.core.windows.net</text>
+    <text class="m" x="950" y="262">linked: hub VNet</text>
+  </g>
+  <g class="node" data-k="pe">
+    <rect x="930" y="300" width="300" height="100"/>
+    <text class="t" x="950" y="326">Private endpoint</text>
+    <text class="m" x="950" y="346">snet-pe in hub</text>
+    <text class="m" x="950" y="364">A record auto-registered</text>
+    <text class="m" x="950" y="382">via private DNS zone group</text>
+  </g>
+  <g class="node store" data-k="storage">
+    <rect x="930" y="420" width="300" height="100"/>
+    <text class="k" x="950" y="442">storage account</text>
+    <text class="t" x="950" y="464">stdnslab&lt;suffix&gt;</text>
+    <text class="m" x="950" y="484">public network access · disabled</text>
+    <text class="m" x="950" y="502">blob service · PE only</text>
+  </g>
+
+  <!-- NODES: lab -->
+  <g class="node" data-k="azvm">
+    <rect x="1300" y="180" width="280" height="80"/>
+    <text class="t" x="1320" y="208">Ubuntu lab VM</text>
+    <text class="m" x="1320" y="228">vm-ubuntu-lab</text>
+    <text class="m" x="1320" y="246">no public IP · serial console</text>
+  </g>
+  <g class="node gate" data-k="policy">
+    <rect x="1300" y="290" width="280" height="80"/>
+    <text class="k" x="1320" y="312">dns sec policy</text>
+    <text class="t" x="1320" y="334">DNS resolver policy</text>
+    <text class="m" x="1320" y="354">linked: lab VNet · evaluates queries</text>
+  </g>
+  <g class="node" data-k="rule">
+    <rect x="1300" y="400" width="280" height="80"/>
+    <text class="t" x="1320" y="426">Block rule + domain list</text>
+    <text class="m" x="1320" y="446">action: Block · SERVFAIL</text>
+    <text class="m" x="1320" y="464">priority 100</text>
+  </g>
+
+  <!-- NODES: observability -->
+  <g class="node store" data-k="law">
+    <rect x="60" y="680" width="260" height="100"/>
+    <text class="k" x="80" y="702">log analytics</text>
+    <text class="t" x="80" y="722">Workspace</text>
+    <text class="m" x="80" y="740">law-dns-resolver-lab</text>
+    <text class="m" x="80" y="758">DnsResolverQueryLogs · KQL</text>
+  </g>
+</svg>
+
+  <div class="src">azure-private-resolver-lab · v1.0</div>
+
+  <div class="card" id="flowcap">
+    <div class="fname" id="f-name"></div>
+    <ol id="f-steps"></ol>
+  </div>
+
+  <div class="card" id="detail">
+    <h3 id="d-title">Click anything</h3>
+    <div class="meta" id="d-meta">node detail</div>
+    <p id="d-body">Every box is clickable. The chips up top light up the demo flows — Demo 1 (inbound on-prem→Azure resolution), Demo 2 (outbound Azure→on-prem), Demo 3 (DNS Security Policy: allowed and blocked).</p>
+  </div>
+</div>
+
+<script>
+const DETAIL = {
+  "onprem-client": { t:"Ubuntu on-prem client", m:"sim · 10.1.0.0/16", b:"Simulated on-prem client. Its <code>/etc/resolv.conf</code> points at the Windows DNS server (10.1.1.4). Demo 1 proves on-prem can resolve Azure private DNS zones via the inbound endpoint." },
+  "windns":        { t:"Windows DNS server", m:"vm-dns-server · 10.1.1.4", b:"Windows Server 2022 with the DNS Server role. <b>Conditional forwarder</b>: <code>privatelink.blob.core.windows.net</code> → 10.0.1.4 (inbound endpoint). <b>Primary zone</b>: <code>contoso.com</code> with an A record (default <code>dns</code> → 10.1.1.4). Configured at deploy time via Custom Script Extension." },
+  "rdp-pip":       { t:"Optional RDP public IP", m:"gated · allowedPublicIp", b:"Disabled by default. If <code>allowedPublicIp</code> is set, a public IP is attached to the Windows DNS NIC and an NSG rule allows RDP/3389 inbound <b>only</b> from that single IP. All other inbound stays blocked." },
+  "resolver":      { t:"DNS Private Resolver", m:"Microsoft.Network/dnsResolvers", b:"Managed Azure-native DNS resolver. Lives in the hub VNet. Has two endpoints — <b>inbound</b> (clients query it from on-prem) and <b>outbound</b> (it queries on-prem). Each endpoint requires a <b>delegated /28 subnet</b>." },
+  "inbound":       { t:"Inbound endpoint", m:"static IP 10.0.1.4", b:"Listens on 10.0.1.4:53 inside the hub VNet. The IP is pinned at deploy time so the Windows conditional forwarder can be hard-coded. On-prem DNS forwards queries here for any Azure private DNS zone linked to the hub." },
+  "outbound":      { t:"Outbound endpoint", m:"no IP · ruleset egress", b:"Has no addressable IP. Queries originating from Azure (matched by the forwarding ruleset on a linked VNet) egress through this endpoint to whatever target the matched rule names — in this lab, the on-prem Windows DNS server at 10.1.1.4." },
+  "ruleset":       { t:"DNS forwarding ruleset", m:"Microsoft.Network/dnsForwardingRulesets", b:"Holds the forwarding rule <code>contoso.com.</code> → 10.1.1.4:53. <b>Linked to the hub VNet AND the lab VNet</b> so VMs in either can hit it. Without a VNet link, the rule has no effect on that VNet's queries." },
+  "pdns":          { t:"Private DNS zone", m:"privatelink.blob.core.windows.net", b:"Azure-managed private zone for storage's privatelink endpoint. <b>Linked to the hub VNet</b>. The private endpoint registers an A record here automatically via its zone group." },
+  "pe":            { t:"Private endpoint", m:"in snet-pe (hub)", b:"NIC in the hub VNet bound to the storage blob sub-resource. Its A record is auto-registered in the privatelink zone via the zone group, so any client resolving the storage hostname through the resolver gets the private IP." },
+  "storage":       { t:"Storage account", m:"public access disabled", b:"The lab's private-resource target. Public network access is OFF; the only way in is via the private endpoint. Resolution proves: on-prem clients hitting the public hostname now get the private IP because the resolver chain returns it." },
+  "azvm":          { t:"Ubuntu lab VM", m:"vm-ubuntu-lab · serial console", b:"Lives in the lab VNet (separate from hub/on-prem). No public IP. DNS queries from this VM go through the DNS Security Policy because the policy is linked to its VNet. Demo 3's <code>dig</code> commands run from here. The forwarding ruleset is also linked to this VNet so Demo 2 works from here too." },
+  "policy":        { t:"DNS resolver policy", m:"linked: lab VNet", b:"Microsoft.Network/dnsResolverPolicies. Region-scoped. Holds DNS security rules. Each VNet link causes queries from that VNet to be evaluated. <b>Gap</b> in AVM coverage — declared as a raw resource at API <code>2025-05-01</code>." },
+  "rule":          { t:"Block rule", m:"action: Block · priority 100", b:"References a domain list ([<code>malicious.contoso.com.</code>, <code>exploit.adatum.com.</code>]). Block response code defaults to <code>SERVFAIL</code> for visibility in <code>dig</code> output. Switch to <code>NXDOMAIN</code> to demo the synthetic <code>blockpolicy.azuredns.invalid</code> redirect." },
+  "law":           { t:"Log Analytics workspace", m:"law-dns-resolver-lab", b:"Captures DNS Security Policy diagnostic logs (<code>DnsResolverQueryLogs</code> via the <code>allLogs</code> categoryGroup). Query in KQL to see which queries were blocked vs allowed and at what priority." }
+};
+
+const FLOWS = {
+  inbound: {
+    name: "Demo 1 — Inbound: on-prem resolves an Azure private endpoint",
+    tone: "go",
+    edges: ["e-client-windns","e-windns-inbound","e-inbound-resolver","e-resolver-pdns","e-pdns-pe","e-pe-stg"],
+    nodes: ["onprem-client","windns","resolver","inbound","pdns","pe","storage"],
+    steps: [
+      "<code>nslookup &lt;sa&gt;.blob.core.windows.net</code> from the on-prem Ubuntu client",
+      "Goes to Windows DNS (10.1.1.4), which has a conditional forwarder for <code>privatelink.blob.core.windows.net</code>",
+      "Forwarded across VNet peering to the resolver inbound endpoint at 10.0.1.4",
+      "Resolver answers from the privatelink zone (linked to hub) — returns the private endpoint IP",
+      "Result: a private 10.0.3.x IP, not the public storage VIP"
+    ]
+  },
+  outbound: {
+    name: "Demo 2 — Outbound: an Azure VM resolves an on-prem zone",
+    tone: "go",
+    edges: ["e-azvm-ruleset","e-ruleset-outbound","e-outbound-windns"],
+    nodes: ["azvm","ruleset","outbound","windns"],
+    steps: [
+      "<code>dig dns.contoso.com</code> from the lab VM",
+      "Lab VNet is linked to the forwarding ruleset; <code>contoso.com</code> rule matches",
+      "Query egresses via the outbound endpoint, across the peering, to 10.1.1.4:53",
+      "Windows DNS (primary zone <code>contoso.com</code>) returns the A record",
+      "Result: 10.1.1.4 — Azure→on-prem name resolution works"
+    ]
+  },
+  secallow: {
+    name: "Demo 3a — DNS Security Policy: allowed query",
+    tone: "go",
+    edges: ["e-azvm-policy"],
+    nodes: ["azvm","policy"],
+    steps: [
+      "<code>dig microsoft.com</code> from the lab VM",
+      "Policy evaluates against the domain lists — no match",
+      "Query proceeds to Azure DNS and resolves normally"
+    ]
+  },
+  secblock: {
+    name: "Demo 3b — DNS Security Policy: blocked query",
+    tone: "stop",
+    edges: ["e-azvm-policy","e-policy-blocked"],
+    nodes: ["azvm","policy","rule"],
+    steps: [
+      "<code>dig malicious.contoso.com</code> from the lab VM",
+      "Policy matches a domain list; block rule fires (priority 100)",
+      "Resolver returns <code>SERVFAIL</code> (or <code>blockpolicy.azuredns.invalid</code> if configured for <code>NXDOMAIN</code> redirect)",
+      "Query is logged to Log Analytics"
+    ]
+  },
+  diag: {
+    name: "Diagnostics — DNS Security Policy → Log Analytics",
+    tone: "go",
+    edges: ["e-policy-blocked","e-rule-law"],
+    nodes: ["policy","rule","law"],
+    steps: [
+      "Resource-scoped diagnostic settings on the policy capture <code>allLogs</code>",
+      "Logs flow to Log Analytics workspace <code>law-dns-resolver-lab</code>",
+      "KQL: <code>DnsResolverQueryLogs | where DnsResponseCode == 'SERVFAIL'</code>"
+    ]
+  }
+};
+
+const stage = document.getElementById('stage');
+const nodes = document.querySelectorAll('.node');
+const edges = document.querySelectorAll('.edge');
+const elbls = document.querySelectorAll('.elbl');
+const chips = document.querySelectorAll('.chip');
+const fcap = document.getElementById('flowcap');
+
+function setFlow(key) {
+  chips.forEach(c => c.classList.toggle('on', c.dataset.flow === key));
+  edges.forEach(e => e.classList.remove('lit'));
+  elbls.forEach(l => l.classList.remove('lit'));
+  nodes.forEach(n => n.classList.remove('lit'));
+  stage.classList.remove('tone-go','tone-stop');
+  if (key === 'all') { stage.classList.remove('flowing'); fcap.classList.remove('show'); return; }
+  const f = FLOWS[key];
+  stage.classList.add('flowing');
+  if (f.tone === 'go') stage.classList.add('tone-go');
+  else if (f.tone === 'stop') stage.classList.add('tone-stop');
+  f.edges.forEach(id => document.getElementById(id)?.classList.add('lit'));
+  elbls.forEach(l => { if (f.edges.includes(l.dataset.e)) l.classList.add('lit'); });
+  f.nodes.forEach(k => document.querySelector(`.node[data-k="${k}"]`)?.classList.add('lit'));
+  document.getElementById('f-name').textContent = f.name;
+  document.getElementById('f-steps').innerHTML = f.steps.map(s => `<li>${s}</li>`).join('');
+  fcap.classList.add('show');
+}
+chips.forEach(c => c.addEventListener('click', () => setFlow(c.dataset.flow)));
+
+nodes.forEach(n => n.addEventListener('click', () => {
+  nodes.forEach(x => x.classList.remove('sel'));
+  n.classList.add('sel');
+  const d = DETAIL[n.dataset.k];
+  if (!d) return;
+  document.getElementById('d-title').textContent = d.t;
+  document.getElementById('d-meta').textContent = d.m;
+  document.getElementById('d-body').innerHTML = d.b;
+}));
+
+document.getElementById('themeToggle').addEventListener('click', () => {
+  const dark = !document.documentElement.classList.contains('dark');
+  document.documentElement.classList.toggle('dark', dark);
+  localStorage.setItem('theme', dark ? 'dark' : 'light');
+});
+</script>
+</body>
+</html>

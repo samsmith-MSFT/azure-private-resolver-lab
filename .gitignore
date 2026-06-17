@@ -1,0 +1,22 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets, credentials, local-only params
+*.pem
+*.pfx
+*.key
+*password*
+*.bicepparam.local
+.env
+.env.*
+secrets.json
+credentials.json
+
+# Build artifacts
+*.log
+*.tmp
+.bicep/
+__pycache__/

@@ -1,0 +1,82 @@
+name: deploy
+
+# OIDC-secured Bicep deployment for the Azure DNS Private Resolver lab.
+# - Pull request  -> what-if (no changes applied)
+# - Push to main  -> deploy, gated by the `production` environment's required reviewer
+# Auth is OIDC via a User-Assigned Managed Identity. IDs are GitHub *variables*, never secrets.
+# The only secret is ADMIN_PASSWORD (used for all VMs).
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write       # required for OIDC token
+  contents: read
+  pull-requests: write  # to surface what-if on the PR
+
+env:
+  TEMPLATE: infra/main.bicep
+  PARAMS: infra/main.bicepparam
+
+jobs:
+  validate:
+    name: What-if (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Bicep what-if
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          az deployment sub what-if \
+            --location "${{ vars.AZURE_LOCATION }}" \
+            --template-file "$TEMPLATE" \
+            --parameters "$PARAMS" \
+            --parameters adminPassword="$ADMIN_PASSWORD"
+
+  deploy:
+    name: Deploy (main)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production   # required-reviewer approval gate lives here
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Bicep deploy
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          az deployment sub create \
+            --location "${{ vars.AZURE_LOCATION }}" \
+            --template-file "$TEMPLATE" \
+            --parameters "$PARAMS" \
+            --parameters adminPassword="$ADMIN_PASSWORD" \
+            --name "gha-${{ github.run_id }}"
+      - name: Surface key outputs
+        if: success()
+        run: |
+          az deployment sub show \
+            --name "gha-${{ github.run_id }}" \
+            --query "properties.outputs" \
+            --output jsonc

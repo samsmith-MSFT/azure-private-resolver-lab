@@ -7,9 +7,9 @@ forwarding ruleset, and the **DNS Security Policy** feature that blocks
 queries against a domain list.
 
 It runs entirely from **GitHub Codespaces** with no local prerequisites.
-Infrastructure is **Bicep + Azure Verified Modules**. Deployment is via an
-**OIDC-secured GitHub Actions pipeline** with a `what-if` gate, or via a
-single `az deployment sub create` from your Codespace terminal.
+Infrastructure is **Bicep + Azure Verified Modules**. Deploy with a single
+`az deployment sub create` from your Codespace terminal (or a local bash
+shell with the Azure CLI installed).
 
 **▶ [Open the interactive architecture diagram](https://samsmith-msft.github.io/azure-private-resolver-lab/diagram/architecture.html)** — click nodes for detail, use the flow chips to trace each demo (inbound, outbound, DNS Security Policy allowed/blocked, diagnostics), and toggle light/dark.
 
@@ -29,7 +29,6 @@ single `az deployment sub create` from your Codespace terminal.
 - [Demo 2 — Outbound: an Azure VM resolves an on-prem zone](#demo-2--outbound-an-azure-vm-resolves-an-on-prem-zone)
 - [Demo 3 — DNS Security Policy](#demo-3--dns-security-policy)
 - [Authenticate to the lab VMs](#authenticate-to-the-lab-vms)
-- [GitHub Actions pipeline (OIDC) — one-time setup](#github-actions-pipeline-oidc--one-time-setup)
 - [Teardown](#teardown)
 - [Troubleshooting](#troubleshooting)
 - [Repository layout](#repository-layout)
@@ -76,9 +75,7 @@ shell. (On Windows, prefer WSL2.) `gh` is optional but useful.
 
 You will also need:
 
-- An **Azure subscription** where you can deploy networking + compute and
-  create role assignments (for the pipeline path; the local-CLI path needs
-  only deploy permissions).
+- An **Azure subscription** where you can deploy networking + compute.
 - **A strong password (12+ characters)** for the lab VMs. You will set this
   as the `ADMIN_PASSWORD` environment variable. It is never committed.
 
@@ -262,98 +259,12 @@ az monitor log-analytics query \
 | `vm-dnslab-dns` (Windows DNS) | Serial console — or RDP if `allowedPublicIp` is set | `azureuser` | same |
 
 The admin username is also exposed as a deployment output (`adminUsername`).
-The password is **never** stored in the deployment, the repo, or the
-pipeline state — it is only ever held in your terminal session and the VM
-itself.
+The password is **never** stored in the deployment or the repo — it is only
+ever held in your terminal session and the VM itself.
 
 To enable RDP to the Windows DNS server, redeploy with
 `--parameters allowedPublicIp='<your-public-ipv4>'`. An NSG rule will allow
 TCP/3389 from that single IP only.
-
-## GitHub Actions pipeline (OIDC) — one-time setup
-
-The included workflow at `.github/workflows/deploy.yml` runs `what-if` on
-every PR that touches `infra/**` and deploys on push to `main`, gated by the
-`production` GitHub environment's required reviewer. Authentication is OIDC
-via a User-Assigned Managed Identity (UAMI) — **no service principal
-secrets** are stored in the repo.
-
-To enable the pipeline, run this once from your local terminal (not from a
-Codespace) where you have permission to create UAMIs and role assignments:
-
-```bash
-# Variables
-SUB_ID="<your-subscription-id>"
-TENANT_ID="<your-tenant-id>"
-LOCATION="eastus2"
-RG_UAMI="rg-dnslab-cicd"
-UAMI_NAME="uami-dnslab-deploy"
-GH_OWNER="<your-github-owner>"
-GH_REPO="<your-github-repo>"
-
-# 1. Create a separate RG for the UAMI (so it survives lab teardowns)
-az group create --name "$RG_UAMI" --location "$LOCATION"
-
-# 2. Create the UAMI
-az identity create --name "$UAMI_NAME" --resource-group "$RG_UAMI" --location "$LOCATION"
-UAMI_CLIENT_ID=$(az identity show --name "$UAMI_NAME" --resource-group "$RG_UAMI" --query clientId -o tsv)
-UAMI_PRINCIPAL_ID=$(az identity show --name "$UAMI_NAME" --resource-group "$RG_UAMI" --query principalId -o tsv)
-
-# 3. Federated credentials for PR (what-if) and main (deploy)
-cat > /tmp/fed-pr.json <<EOF
-{
-  "name": "${GH_REPO}-pr",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:${GH_OWNER}/${GH_REPO}:pull_request",
-  "audiences": ["api://AzureADTokenExchange"]
-}
-EOF
-
-cat > /tmp/fed-main.json <<EOF
-{
-  "name": "${GH_REPO}-main",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:${GH_OWNER}/${GH_REPO}:ref:refs/heads/main",
-  "audiences": ["api://AzureADTokenExchange"]
-}
-EOF
-
-cat > /tmp/fed-prod.json <<EOF
-{
-  "name": "${GH_REPO}-env-production",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:${GH_OWNER}/${GH_REPO}:environment:production",
-  "audiences": ["api://AzureADTokenExchange"]
-}
-EOF
-
-az identity federated-credential create --identity-name "$UAMI_NAME" --resource-group "$RG_UAMI" --parameters /tmp/fed-pr.json
-az identity federated-credential create --identity-name "$UAMI_NAME" --resource-group "$RG_UAMI" --parameters /tmp/fed-main.json
-az identity federated-credential create --identity-name "$UAMI_NAME" --resource-group "$RG_UAMI" --parameters /tmp/fed-prod.json
-
-# 4. Grant the UAMI the role it needs at subscription scope (Contributor + User Access Administrator)
-#    The lab needs both because storage + DNS resources don't require RBAC writes,
-#    but enabling DNS Security Policy diagnostics may.
-az role assignment create --assignee "$UAMI_PRINCIPAL_ID" --role "Contributor" --scope "/subscriptions/$SUB_ID"
-az role assignment create --assignee "$UAMI_PRINCIPAL_ID" --role "User Access Administrator" --scope "/subscriptions/$SUB_ID"
-
-# 5. Set GitHub variables (NOT secrets) for the workflow
-gh variable set AZURE_CLIENT_ID --body "$UAMI_CLIENT_ID" --repo "$GH_OWNER/$GH_REPO"
-gh variable set AZURE_TENANT_ID --body "$TENANT_ID" --repo "$GH_OWNER/$GH_REPO"
-gh variable set AZURE_SUBSCRIPTION_ID --body "$SUB_ID" --repo "$GH_OWNER/$GH_REPO"
-gh variable set AZURE_LOCATION --body "$LOCATION" --repo "$GH_OWNER/$GH_REPO"
-
-# 6. Set the only secret — the VM admin password
-gh secret set ADMIN_PASSWORD --repo "$GH_OWNER/$GH_REPO"
-
-# 7. Create the production environment with you as a required reviewer (UI step)
-echo "Now go to: https://github.com/${GH_OWNER}/${GH_REPO}/settings/environments/new"
-echo "Create environment 'production' and add yourself as a required reviewer."
-```
-
-After this one-time setup, every PR that touches `infra/**` will run
-`what-if` automatically. Merging to `main` triggers the deploy job, which
-waits for your approval in the `production` environment before applying.
 
 ## Teardown
 
@@ -362,8 +273,6 @@ waits for your approval in the `production` environment before applying.
 ```
 
 Or directly: `az group delete --name rg-dnslab --yes --no-wait`.
-
-To remove the pipeline UAMI as well, delete `rg-dnslab-cicd`.
 
 ## Troubleshooting
 
@@ -403,9 +312,6 @@ already pins this, but synced personal settings can override it.
 ├── .gitignore
 ├── .devcontainer/
 │   └── devcontainer.json       # bash default; az + bicep + gh + pwsh preinstalled
-├── .github/
-│   └── workflows/
-│       └── deploy.yml          # OIDC pipeline: PR -> what-if; main -> apply (env-gated)
 ├── infra/
 │   ├── main.bicep              # subscription-scoped: creates RG + composes modules
 │   ├── main.bicepparam         # default lab parameters

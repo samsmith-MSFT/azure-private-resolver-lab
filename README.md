@@ -13,10 +13,13 @@ single `az deployment sub create` from your Codespace terminal.
 
 ![Architecture](diagram/architecture.png)
 
-> The PNG above is a snapshot of the lab's interactive HTML diagram.
-> Open [`diagram/architecture.html`](diagram/architecture.html) in a browser
-> for the clickable version with per-demo flow highlights and per-resource
-> detail cards.
+> The PNG above is a snapshot of the lab's interactive HTML diagram. For the
+> clickable version with per-demo flow highlights and per-resource detail
+> cards, **[open the interactive diagram](https://htmlpreview.github.io/?https://github.com/samsmith-MSFT/azure-private-resolver-lab/blob/main/diagram/architecture.html)**
+> (rendered via htmlpreview.github.io) — or download
+> [`diagram/architecture.html`](diagram/architecture.html) and open it
+> locally. Public mirrors do not render interactive HTML directly from a
+> repository view; the link above is the standard workaround.
 
 ## Contents
 
